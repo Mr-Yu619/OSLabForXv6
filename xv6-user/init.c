@@ -5,32 +5,91 @@
 #include "kernel/include/file.h"
 #include "kernel/include/fcntl.h"
 #include "xv6-user/user.h"
+#include "kernel/include/sysnum.h"
+#include "kernel/include/syscall.h"
+// char *argv[] = { "sh", 0 };
+char* argv[] = { 0};
+char* tests[] = {
+  // "sh",
+  "times",
+  "execve",
+  "dup",
+  "read",
+  "mkdir_",
+  "dup2",
+  "uname",
+  "gettimeofday",
+  "openat",
+  "open",
+  "write",
+  "close",
+  "getpid",
+  "getppid",
+  "clone",
+  "exit",
+  "fork",
+  "chdir",
+  "pipe",
+  "wait",
+  "brk",
+  "getcwd",
 
-
-char *argv[] = { "sh", 0 };
-char *tester_list[] = {
-    "exit",
-    // 添加更多的程序
+  "waitpid",
+  "getdents",
+  "fstat",
+  "yield",
+  "mmap",
+  "munmap",
+  "umount",
+  "unlink",
+  "mount",
+  "sleep",
 };
+
 int
 main(void)
 {
+  int pid, wpid;
+  
+  // if(open("console", O_RDWR) < 0){
+  //   mknod("console", CONSOLE, 0);
+  //   open("console", O_RDWR);
+  // }
   dev(O_RDWR, CONSOLE, 0);
-  dup(0); // stdout
-  dup(0); // stderr
-
-  for(int i = 0; i< sizeof(tester_list)/sizeof(tester_list[0]);i++)
-  {
-    char* tester_i = tester_list[i];
-    //1.用fork新建一个线程，在子线程中执行 tester i
-    //2.等待子线程结束
-    int pid = fork();
+  dup(0);  // stdout
+  dup(0);  // stderr
+  int counts =NELEM(tests);// sizeof(tests)/ sizeof(tests[0]);
+  for(int i=0;i< counts;i++){
+    printf("init: starting %s\n",tests[i]);
+    pid = fork();
+    if(pid < 0){
+      printf("init: fork failed\n");
+      exit(1);
+    }
     if(pid == 0){
-      exec(tester_i, argv);
+      // exec("sh", argv);
+      // argv[0] = tests[i];
+      exec(tests[i],argv);
+      printf("init: exec %s failed\n",tests[i]);
+      exit(1);
+    }
+
+    for(;;){
+      // this call to wait() returns if the shell exits,
+      // or if a parentless process exits.
+      wpid = wait((int *) -1);
+      if(wpid == pid){
+        // the shell exited; restart it.
+        // exit(0);
+        break;
+      } else if(wpid < 0){
+        printf("init: wait returned an error\n");
+        exit(1);
+      } else {
+        // it was a parentless process; do nothing.
+      }
     }
   }
-  int a;
-  wait(&a);
-  (*(volatile uint32 *) 0x100000) = 0x5555; // write PHYSICAL address
-  return 1;
+  __syscall0(SYS_shutdown);
+  return 0;
 }

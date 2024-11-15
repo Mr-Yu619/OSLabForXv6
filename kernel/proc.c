@@ -13,7 +13,7 @@
 #include "include/file.h"
 #include "include/trap.h"
 #include "include/vm.h"
-
+#include "kernel/constants.h"
 
 struct cpu cpus[NCPU];
 
@@ -28,7 +28,7 @@ extern void forkret(void);
 extern void swtch(struct context*, struct context*);
 static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
-
+static struct proc *allocproc(void);
 extern char trampoline[]; // trampoline.S
 
 void reg_info(void) {
@@ -116,6 +116,42 @@ allocpid() {
   nextpid = nextpid + 1;
   release(&pid_lock);
 
+  return pid;
+}
+int cloneproc(uint64 stack){
+  struct proc* p = myproc();
+  struct proc* np;
+  if((np = allocproc()) == NULL) 
+    return -1;
+   // Copy user memory from parent to child.
+  if(uvmcopy(p->pagetable, np->pagetable, np->kpagetable, p->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+  np->sz = p->sz;
+  np->parent = p;
+  // copy tracing mask from parent.
+  np->tmask = p->tmask;
+  // copy saved user registers.
+  *(np->trapframe) = *(p->trapframe);
+  // Cause fork to return 0 in the child.
+  np->trapframe->a0 = 0;
+  // increment reference counts on open file descriptors.
+  for(int i = 0; i < NOFILE; i++)
+    if(p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
+  np->cwd = edup(p->cwd);
+  safestrcpy(np->name, p->name, sizeof(p->name));
+  int pid = np->pid;
+  np->state = RUNNABLE;
+  release(&np->lock);
+  uint64 fn;
+  copyin(p->pagetable,(char*)&fn,stack,8);
+  printf("exec function address is %x\n",fn);
+  np->trapframe->ra = fn; // clone后续会调用exit
+  np->trapframe->sp = stack;
+  printf("ret pid:%d\n",pid);
   return pid;
 }
 
@@ -248,9 +284,8 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 //   0x00, 0x00, 0x00, 0x00
 // };
 uchar initcode[] = {
-  #include "./kernel/include/initcode.h"
+  #include "kernel/include/initcode.h"
 };
-
 
 // uchar printhello[] = {
 //     0x13, 0x00, 0x00, 0x00,     // nop
@@ -418,8 +453,9 @@ exit(int status)
 {
   struct proc *p = myproc();
 
-  if(p == initproc)
+  if(p == initproc){
     panic("init exiting");
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
@@ -473,7 +509,46 @@ exit(int status)
   sched();
   panic("zombie exit");
 }
+int 
+waitpid(int pid, uint64 addr,int options){
+  struct proc* np= NULL, *p = myproc();
+  int havekids;
+  acquire(&p->lock);
+  while(1){
+    for(int i= 0; i < NPROC; i++){
+      if(proc[i].pid == pid && proc[i].parent == p){
+        np = &proc[i];
+        break;
+      }
+    }
+    if(!np){
+      return -1; // this process has no children pid
+    }
+    havekids = 1;
+    acquire(&np->lock);
+    if(np->state == ZOMBIE){
+      printf("exit status: %d\n",np->xstate);
+      int state = np->xstate << 8;
 
+      if(addr != 0 && copyout2(addr, (char *)& state, sizeof(np->xstate)) < 0) {
+        release(&np->lock);
+        release(&p->lock);
+        return -1;
+      }
+      freeproc(np);
+      release(&np->lock);
+      release(&p->lock);
+      return pid;
+    }
+    release(&np->lock);
+    if(!havekids || p->killed ) {
+      release(&p->lock);
+      return -1;
+    }
+    sleep(p,&p->lock);
+  }
+  
+}
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
 int
@@ -526,6 +601,7 @@ wait(uint64 addr)
     sleep(p, &p->lock);  //DOC: wait-sleep
   }
 }
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -799,108 +875,3 @@ procnum(void)
   return num;
 }
 
-uint64
-clone(void)
-{
-  struct proc *np;
-  struct proc *p = myproc();
-  int pid;
-
-  if((np = allocproc()) == NULL){
-    return -1;
-  }
-   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, np->kpagetable, p->sz) < 0){
-    freeproc(np);
-    release(&np->lock);
-    return -1;
-  }
-  np->sz = p->sz;
-  np->parent = p;
-  
-  // copy tracing mask from parent.
-  np->tmask = p->tmask;
-
-  // copy saved user registers.
-  *(np->trapframe) = *(p->trapframe);
-
-  uint64 stack = p->trapframe->a1;
-  if(stack!=0){
-    uint64 fn = *((uint64 *)((char *)(p->trapframe->a1)));
-    uint64 arg = *((uint64 *)((char *)(p->trapframe->a1) + 8));
-    // 修改栈指针
-    np->trapframe->sp = stack;
-    // 修改进程程序计数器
-    np->trapframe->epc = fn;
-    // 设置参数
-    np->trapframe->a0 = arg;
-  }
-  // Cause clone to return 0 in the child. 
-  np->trapframe->a0 = 0;
-
-  // increment reference counts on open file descriptors.
-  for(int i = 0; i < NOFILE; i++)
-    if(p->ofile[i])
-      np->ofile[i] = filedup(p->ofile[i]);
-  np->cwd = edup(p->cwd);
-  safestrcpy(np->name, p->name, sizeof(p->name));
-  pid = np->pid;
-  np->state = RUNNABLE;
-  release(&np->lock);
-  return pid;
-}
-
-
-int
-waitpid(int upid, uint64 addr)
-{
-  struct proc *np;
-  int havekids, pid;
-  struct proc *p = myproc();
-  int status;
-
-  // hold p->lock for the whole time to avoid lost
-  // wakeups from a child's exit().
-  acquire(&p->lock);
-
-  for(;;){
-    // Scan through table looking for exited children.
-    havekids = 0;
-    for(np = proc; np < &proc[NPROC]; np++){
-      // this code uses np->parent without holding np->lock.
-      // acquiring the lock first would cause a deadlock,
-      // since np might be an ancestor, and we already hold p->lock.
-      if(np->parent == p){
-        // np->parent can't change between the check and the acquire()
-        // because only the parent changes it, and we're the parent.
-        acquire(&np->lock);
-        havekids = 1;
-       if(np->state == ZOMBIE && (np->pid == upid || upid == -1)){
-          // Found one.
-          pid = np->pid;
-          status = np->xstate << 8; // note
-
-          if(addr != 0 && copyout2(addr, (char *)&status, sizeof(status)) < 0) {
-            release(&np->lock);
-            release(&p->lock);
-            return -1;
-          }
-          freeproc(np);
-          release(&np->lock);
-          release(&p->lock);
-          return pid;
-        }
-        release(&np->lock);
-      }
-    }
-
-    // No point waiting if we don't have any children.
-    if(!havekids || p->killed){
-      release(&p->lock);
-      return -1;
-    }
-    
-    // Wait for a child to exit.
-    sleep(p, &p->lock);  //DOC: wait-sleep
-  }
-}

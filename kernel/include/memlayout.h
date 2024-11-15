@@ -26,6 +26,7 @@
 //
 // 00001000 -- boot ROM, provided by qemu
 // 02000000 -- CLINT
+// 03000000 -- SHUTDOWN
 // 0C000000 -- PLIC
 // 10000000 -- uart0 
 // 10001000 -- virtio disk 
@@ -34,7 +35,7 @@
 // unused RAM after 80000000.
 
 #define VIRT_OFFSET             0x3F00000000L
-
+// #define QEMU
 #ifdef QEMU
 // qemu puts UART registers here in physical memory.
 #define UART                    0x10000000L
@@ -48,6 +49,8 @@
 // virtio mmio interface
 #define VIRTIO0                 0x10001000
 #define VIRTIO0_V               (VIRTIO0 + VIRT_OFFSET)
+#define VIRT_SHUTDOWN           0x100000
+#define VIRT_SHUTDOWN_V         (VIRT_SHUTDOWN+ VIRT_OFFSET)
 #endif
 
 // local interrupt controller, which contains the timer.

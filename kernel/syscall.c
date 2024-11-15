@@ -105,6 +105,7 @@ extern uint64 sys_pipe(void);
 extern uint64 sys_read(void);
 extern uint64 sys_sbrk(void);
 extern uint64 sys_sleep(void);
+extern uint64 sys_nanosleep(void);
 extern uint64 sys_wait(void);
 extern uint64 sys_write(void);
 extern uint64 sys_uptime(void);
@@ -116,13 +117,29 @@ extern uint64 sys_remove(void);
 extern uint64 sys_trace(void);
 extern uint64 sys_sysinfo(void);
 extern uint64 sys_rename(void);
+extern uint64 sys_shutdown(void);
+// added syscall
+extern uint64 sys_brk(void);
+extern uint64 sys_munmap(void);
+extern uint64 sys_mkdirat(void);
+extern uint64 sys_openat(void);
+extern uint64 sys_gettimeofday(void);
+extern uint64 sys_times(void);
+extern uint64 sys_execve(void);
+extern uint64 sys_uname(void);
+extern uint64 sys_dup3(void);
+extern uint64 sys_getppid(void);
 extern uint64 sys_clone(void);
-extern uint64 sys_waitpid(void);
+extern uint64 sys_wait4(void);
+extern uint64 sys_sched_yield(void);
+extern uint64 sys_umount(void);
+extern uint64 sys_mount(void);
+extern uint64 sys_unlinkat(void);
 
 static uint64 (*syscalls[])(void) = {
   [SYS_fork]        sys_fork,
   [SYS_exit]        sys_exit,
-  [SYS_wait]        sys_wait,
+  // [SYS_wait]        sys_wait,
   [SYS_pipe]        sys_pipe,
   [SYS_read]        sys_read,
   [SYS_kill]        sys_kill,
@@ -132,9 +149,10 @@ static uint64 (*syscalls[])(void) = {
   [SYS_dup]         sys_dup,
   [SYS_getpid]      sys_getpid,
   [SYS_sbrk]        sys_sbrk,
-  [SYS_sleep]       sys_sleep,
+  [SYS_nanosleep]   sys_nanosleep,
+  // [SYS_sleep]       sys_sleep,
   [SYS_uptime]      sys_uptime,
-  [SYS_open]        sys_open,
+  // [SYS_open]        sys_open,
   [SYS_write]       sys_write,
   [SYS_mkdir]       sys_mkdir,
   [SYS_close]       sys_close,
@@ -146,8 +164,25 @@ static uint64 (*syscalls[])(void) = {
   [SYS_trace]       sys_trace,
   [SYS_sysinfo]     sys_sysinfo,
   [SYS_rename]      sys_rename,
+  [SYS_shutdown]    sys_shutdown,
+// added sysnum
+  [SYS_brk]         sys_brk,
+  [SYS_munmap]      sys_munmap,
+  [SYS_mkdirat]     sys_mkdirat,
+  [SYS_chdir]       sys_chdir,
+  [SYS_openat]      sys_openat,
+  [SYS_gettimeofday] sys_gettimeofday,
+  [SYS_times]       sys_times,
+  [SYS_execve]      sys_execve,
+  [SYS_uname]       sys_uname,
+  [SYS_dup3]        sys_dup3,
+  [SYS_getppid]     sys_getppid,
   [SYS_clone]       sys_clone,
-  [SYS_waitpid]     sys_waitpid,
+  [SYS_wait4]       sys_wait4,
+  [SYS_sched_yield] sys_sched_yield,
+  [SYS_mount]       sys_mount,
+  [SYS_umount2]     sys_umount,
+  [SYS_unlinkat]    sys_unlinkat
 };
 
 static char *sysnames[] = {
@@ -177,8 +212,6 @@ static char *sysnames[] = {
   [SYS_trace]       "trace",
   [SYS_sysinfo]     "sysinfo",
   [SYS_rename]      "rename",
-  [SYS_clone]       "clone",
-  [SYS_waitpid]     "sys_waitpid",
 };
 
 void

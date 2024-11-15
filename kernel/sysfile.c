@@ -20,8 +20,9 @@
 #include "include/string.h"
 #include "include/printf.h"
 #include "include/vm.h"
-
-
+#include "include/memlayout.h"
+#include "kernel/constants.h"
+// #define TEST
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -59,6 +60,33 @@ fdalloc(struct file *f)
 }
 
 uint64
+sys_dup3(void)
+{
+  int fd1,fd2,fd3;
+  struct file* f1;
+  if(argfd(0,&fd1,&f1) < 0 ||
+    argint(1,&fd2) < 0 || 
+    argint(2,&fd3) < 0) 
+      return -1;
+  if(fd3 != 0){ // fd3非零时行为没有定义
+    printf("fd3!=0,undefined!\n");
+    return -1;
+  }
+  struct proc* p = myproc();
+
+  if(fd2 >= 0 && fd2 < NFILE && p->ofile[fd2] != NULL){
+    fileclose(p->ofile[fd2]);
+  }
+
+  if(!f1){ // 没有复制的目标！
+  printf("f1 is null,undefined!\n");
+    return -1;
+  }
+  struct file* fp = filedup(f1);
+  p->ofile[fd2] = fp;
+  return fd2;
+}
+uint64
 sys_dup(void)
 {
   struct file *f;
@@ -75,24 +103,36 @@ sys_dup(void)
 uint64
 sys_read(void)
 {
+  #ifdef TEST
+  printf("called sys_read");
+  #endif
   struct file *f;
   int n;
   uint64 p;
 
-  if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argaddr(1, &p) < 0)
+  if(
+    argfd(0, 0, &f) < 0 || 
+    argint(2, &n) < 0 || 
+    argaddr(1, &p) < 0
+    ){
     return -1;
+    }
   return fileread(f, p, n);
 }
 
 uint64
 sys_write(void)
 {
+  #ifdef TEST
+  printf("called sys_write");
+  #endif
   struct file *f;
   int n;
   uint64 p;
 
-  if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argaddr(1, &p) < 0)
+  if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argaddr(1, &p) < 0){
     return -1;
+  }
 
   return filewrite(f, p, n);
 }
@@ -120,10 +160,39 @@ sys_fstat(void)
     return -1;
   return filestat(f, st);
 }
+static struct dirent* 
+create_at(struct dirent* dp,char* filename,short type, int mode){
+  // 在目录dp下创建文件filename
+  if(!(dp->attribute & ATTR_DIRECTORY)){
+    // printf("ep not directory!\n");
+    return NULL;
+  }
+  struct dirent *ep;
+  elock(dp);
+  if((ep = ealloc(dp,filename,mode)) == NULL){
+    eunlock(dp);
+    eput(dp);
+    return NULL;
+  }
+  
+  if ((type == T_DIR && !(ep->attribute & ATTR_DIRECTORY)) ||
+      (type == T_FILE && (ep->attribute & ATTR_DIRECTORY))) {
+    eunlock(dp);
+    eput(ep);
+    eput(dp);
+    return NULL;
+  }
 
+  eunlock(dp);
+  eput(dp);
+
+  elock(ep);
+  return ep;
+}
 static struct dirent*
 create(char *path, short type, int mode)
 {
+  // create the file at path(full filename + path)
   struct dirent *ep, *dp;
   char name[FAT32_MAX_FILENAME + 1];
 
@@ -168,22 +237,28 @@ sys_open(void)
   struct file *f;
   struct dirent *ep;
 
-  if(argstr(0, path, FAT32_MAX_PATH) < 0 || argint(1, &omode) < 0)
+  if(
+    argstr(0, path, FAT32_MAX_PATH) < 0 || 
+    argint(1, &omode) < 0
+  )// path包括路径+文件名
     return -1;
-
-  if(omode & O_CREATE){
+  // printf("calling sys_open(path=%s,omode=%x)\n",path,omode);
+  if(omode & O_CREATE){// create new file in path
     ep = create(path, T_FILE, omode);
     if(ep == NULL){
       return -1;
     }
   } else {
-    if((ep = ename(path)) == NULL){
+    if((ep = ename(path)) == NULL){ // if file not found in path
+      // printf("err1");
       return -1;
     }
     elock(ep);
-    if((ep->attribute & ATTR_DIRECTORY) && omode != O_RDONLY){
+    // 如果打开的是dir,omode没有dir flag
+    if((ep->attribute & ATTR_DIRECTORY) && omode != O_DIRECTORY){
       eunlock(ep);
       eput(ep);
+      // printf("err2");
       return -1;
     }
   }
@@ -223,6 +298,171 @@ sys_mkdir(void)
   }
   eunlock(ep);
   eput(ep);
+  return 0;
+}
+
+// unfinished
+uint64 sys_mkdirat(void){
+  // sys_mkdir(int dirfd, char* path, mode_t mode);
+  char path[FAT32_MAX_PATH];
+  struct dirent *at;
+  int dirfd;
+  int mode;
+  // printf("in %s:",__func__);
+  if(argint(0,&dirfd) < 0 || 
+    argstr(1, path, FAT32_MAX_PATH) < 0 || 
+    argint(2, &mode) < 0)
+    return -1;
+  if(dirfd == AT_FDCWD){
+    myproc()->trapframe->a0 = myproc()->trapframe->a1;
+    return sys_mkdir();
+    // at = myproc()->cwd;
+  }else if(dirfd >= 0){
+    at = myproc()->ofile[dirfd]->ep;
+  }else return -1;
+  // printf("calling sys_mkdirat(dirfd=%d,path=%s,mode=%x)\n",dirfd,path,mode);
+  
+  elock(at);
+  struct dirent* ep;
+  if((ep = ealloc(at,path,mode)) == 0){
+    eunlock(at);
+    // eput(ep);
+    eput(at);
+    return -1;
+  }
+  if (!(ep->attribute & ATTR_DIRECTORY)) {
+    eunlock(at);
+    eput(ep);
+    eput(at);
+    return -1;
+  }
+  eunlock(at);
+  eput(ep);
+  eput(at);
+  // printf("sys_mkdirat ret 0\n");
+  return 0;
+}
+uint64
+sys_mount(void){return 0;}
+uint64
+sys_umount(void){return 0;}
+uint64
+sys_unlinkat(void){return 0;}
+uint64 sys_openat(void){
+  // #ifdef TEST
+  // printf("called sys_openat");
+  // return 1;
+  // #endif
+  // open(int fd,const char* filename,int flags,mode_t mode);
+  char path[FAT32_MAX_PATH];
+  int fd, omode;
+  struct file *f;
+  struct dirent *ep, *at;
+
+  int flags;
+  // int fd;
+  if(
+    argint(0,&fd) < 0 ||
+    argstr(1, path, FAT32_MAX_PATH) < 0 || 
+    argint(2, &flags) < 0 ||
+    argint(3, &omode) < 0 
+  )
+    return -1;
+  // printf("called sys_openat(fd=%d,path=%s,flags=%x,mode=%x)",fd,path,flags,omode);
+  if(fd == AT_FDCWD){
+    struct proc* p = myproc();
+    p->trapframe->a0 = p->trapframe -> a1;
+    p->trapframe->a1 = p->trapframe->a2;
+    // p->trapframe->a1 = omode;
+    uint64 ret = sys_open();
+    // printf("return:%d\n",ret);
+    return ret;
+  }else{
+    if(!(myproc()->ofile[fd]->ep->attribute & ATTR_DIRECTORY)){
+      // printf("not directory!");
+      return -1;
+    }
+    at = myproc()->ofile[fd]->ep;
+    if(at == NULL) {
+      // printf("err0");
+      return -1;
+    }
+  }
+  if(flags & O_CREATE){
+    // 新建文件
+    ep = create_at(at, path, T_FILE, omode);
+    if(ep == NULL){
+      // printf("err2");
+      return -1;
+    }
+  } else {
+    // 打开已有文件
+    elock(at);
+    ep = dirlookup(at,path,0);
+    eunlock(at);
+    if(ep == NULL){
+      // printf("err1");
+      return -1;
+    }
+    elock(ep);
+    if((ep->attribute & ATTR_DIRECTORY) && omode != O_RDONLY){
+      eunlock(ep);
+      eput(ep);
+      // printf("err4");
+      return -1;
+    }
+  }
+
+  if((f = filealloc()) == NULL || (fd = fdalloc(f)) < 0){
+    if (f) {
+      fileclose(f);
+    }
+    eunlock(ep);
+    eput(ep);
+    // printf("err5");
+    return -1;
+  }
+
+  if(!(ep->attribute & ATTR_DIRECTORY) && (omode & O_TRUNC)){
+    etrunc(ep);
+  }
+
+  f->type = FD_ENTRY;
+  f->off = (omode & O_APPEND) ? ep->file_size : 0;
+  f->ep = ep;
+  f->readable = !(omode & O_WRONLY);
+  f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+
+  eunlock(ep);
+
+  return fd;
+}
+
+struct dirent_tmp {
+    uint64 d_ino;
+    int64 d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[];
+};
+uint64
+sys_getdents(void)
+{
+  int fd;
+  uint64 buf_addr;
+  int len;
+  if(
+    argint(0,&fd) < 0 ||
+    argaddr(1,&buf_addr) < 0 || 
+    argint(2,&len) < 0
+  ){
+    return -1;
+  }
+  if(myproc()->ofile[fd]->type != FD_ENTRY){
+    printf("err: not entry!\n");
+    return -1;
+  }
+  // struct dirent* dp = myproc()->ofile[fd]->ep;
   return 0;
 }
 
@@ -333,11 +573,11 @@ uint64
 sys_getcwd(void)
 {
   uint64 addr;
+  if (argaddr(0, &addr) < 0)
+    return NULL;
   int size;
-  if (argaddr(0, &addr) < 0 || argint(1, &size))
-    return -1;
+  if(argint(1,&size) < 0) return NULL;
 
-  
   struct dirent *de = myproc()->cwd;
   char path[FAT32_MAX_PATH];
   char *s;
@@ -352,31 +592,19 @@ sys_getcwd(void)
       len = strlen(de->filename);
       s -= len;
       if (s <= path)          // can't reach root "/"
-        return -1;
+        return NULL;
       strncpy(s, de->filename, len);
       *--s = '/';
       de = de->parent;
     }
   }
-
-  if (addr == NULL) {
-    struct proc *p = myproc();
-    // Ensure there is enough space in the stack
-    if (p->trapframe->sp < (strlen(s) + 1))
-      return -1;
-    p->trapframe->sp -= strlen(s) + 1;
-    addr = p->trapframe->sp;
+  if(addr == 0){// TODO:系统分配缓存区
+    return NULL;
   }
-  else{
-    int path_length = strlen(s) + 1;  // 缓冲区空间不足
-      if (size < path_length)
-        return NULL;
-  }
-
-
   // if (copyout(myproc()->pagetable, addr, s, strlen(s) + 1) < 0)
-  if (copyout2(addr, s, strlen(s) + 1) < 0)
-    return -1;
+  int str_size = strlen(s) + 1 ;
+  if (copyout2(addr, s, str_size < size ? str_size : size) < 0)
+    return NULL;
   
   return addr;
 
@@ -510,4 +738,15 @@ fail:
   if (src)
     eput(src);
   return -1;
+}
+uint64 sys_shutdown(void){
+
+  printf("shutting down...\n");
+  #ifdef QEMU
+  printf("writing %p into %p...",0x5555,VIRT_SHUTDOWN_V);
+  (*(volatile uint32 *) VIRT_SHUTDOWN_V) = 0x5555;
+  #else
+  printf("I dont know how to shutdown...\n");
+  #endif
+  return 0;
 }

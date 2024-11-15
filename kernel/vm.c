@@ -33,7 +33,10 @@ kvminit()
   #ifdef QEMU
   // virtio mmio disk interface
   kvmmap(VIRTIO0_V, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+  // for exit
+  kvmmap(VIRT_SHUTDOWN_V,VIRT_SHUTDOWN,PGSIZE, PTE_R | PTE_W);
   #endif
+
   // CLINT
   kvmmap(CLINT_V, CLINT, 0x10000, PTE_R | PTE_W);
 
@@ -261,26 +264,6 @@ uvmcreate()
 // Load the user initcode into address 0 of pagetable,
 // for the very first process.
 // sz must be less than a page.
-// void
-// uvminit(pagetable_t pagetable, pagetable_t kpagetable, uchar *src, uint sz)
-// {
-//   char *mem;
-
-//   if(sz >= PGSIZE)
-//     panic("inituvm: more than a page");
-//   mem = kalloc();
-//   // printf("[uvminit]kalloc: %p\n", mem);
-//   memset(mem, 0, PGSIZE);
-//   mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
-//   mappages(kpagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X);
-//   memmove(mem, src, sz);
-//   // for (int i = 0; i < sz; i ++) {
-//   //   printf("[uvminit]mem: %p, %x\n", mem + i, mem[i]);
-//   // }
-// }
-// Load the user initcode into address 0 of pagetable,
-// for the very first process.
-// sz must be less than a page.
 void
 uvminit(pagetable_t pagetable, pagetable_t kpagetable, uchar *src, uint sz)
 {
@@ -289,13 +272,15 @@ uvminit(pagetable_t pagetable, pagetable_t kpagetable, uchar *src, uint sz)
   if(sz >= PGSIZE)
     panic("inituvm: more than a page");
   mem = kalloc();
+  // printf("[uvminit]kalloc: %p\n", mem);
   memset(mem, 0, PGSIZE);
   mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
-  mappages(pagetable, 0x100000, PGSIZE, 0x100000, PTE_W|PTE_R|PTE_U);  // mark!
   mappages(kpagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X);
   memmove(mem, src, sz);
+  // for (int i = 0; i < sz; i ++) {
+  //   printf("[uvminit]mem: %p, %x\n", mem + i, mem[i]);
+  // }
 }
-
 
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
